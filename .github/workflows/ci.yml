@@ -32,3 +32,6 @@ jobs:
 
       - name: Run conversation scenarios offline
         run: python -m support_agent.evaluate
+
+      - name: Run durable followup demo offline
+        run: python -m support_agent.demo

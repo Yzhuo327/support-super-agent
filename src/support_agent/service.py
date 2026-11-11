@@ -22,6 +22,7 @@ from support_agent.models import get_model
 from support_agent.policies_kb import PolicyBase
 from support_agent.policy import PolicyConfig
 from support_agent.store import Store
+from support_agent.tickets import FollowupService
 from support_agent.tools import make_tools
 
 MAX_STEPS_PER_TURN = 16  # model + tool steps; stops a confused model from looping forever
@@ -114,6 +115,7 @@ class SupportService:
         policy: PolicyConfig | None = None,
         data_dir: Path | None = None,
         db_path: str | None = None,
+        followup_mode: str = "observe",
     ) -> None:
         """db_path: SQLite file for conversations, checkpoints and pending approvals. None keeps them in memory."""
         data_dir = data_dir or default_data_dir()
@@ -122,9 +124,16 @@ class SupportService:
         tools = make_tools(self.store, PolicyBase(data_dir / "policies.md"), self.policy)
 
         connection = sqlite3.connect(db_path or ":memory:", check_same_thread=False)
+        self._connection = connection
         checkpointer: BaseCheckpointSaver = SqliteSaver(connection) if db_path else InMemorySaver()
         self.registry = ConversationRegistry(connection)
-        self.graph = build_graph(model or get_model(), tools, self.store.customers, checkpointer)
+        model = model or get_model()
+        self.graph = build_graph(model, tools, self.store.customers, checkpointer)
+        self.followups = FollowupService(self.store, model, data_dir, db_path, followup_mode)
+
+    def close(self) -> None:
+        self.followups.close()
+        self._connection.close()
 
     # ---------- customer side ----------
 

@@ -13,13 +13,14 @@ Run: uvicorn support_agent.api:app --reload
 # No "from __future__ import annotations" here: FastAPI must resolve the Depends() inside create_app at runtime.
 import hmac
 import os
-from dataclasses import asdict
-from typing import Annotated
+from dataclasses import asdict, is_dataclass
+from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from support_agent.service import ConversationError, SupportService
+from support_agent.tickets import FollowupError
 
 
 class ChatRequest(BaseModel):
@@ -33,8 +34,24 @@ class ApprovalDecision(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
+class FollowupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    order_id: str = Field(min_length=1, max_length=64)
+    locale: Literal["zh", "en"] = "zh"
+
+
+class ShipmentEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    ticket_id: str = Field(min_length=1, max_length=64)
+    event_id: str = Field(min_length=1, max_length=128)
+    sequence: int = Field(ge=1, strict=True)
+    status: Literal["delayed", "in_transit", "delivered"]
+
+
 def create_app(service: SupportService | None = None, staff_key: str | None = None) -> FastAPI:
-    service = service or SupportService(db_path=os.getenv("SUPPORT_DB"))
+    service = service or SupportService(
+        db_path=os.getenv("SUPPORT_DB"), followup_mode=os.getenv("FOLLOWUP_MODE", "observe")
+    )
     staff_key = staff_key or os.getenv("STAFF_API_KEY", "dev-staff-key")
     app = FastAPI(title="Support agent API", version="0.1.0")
 
@@ -47,8 +64,9 @@ def create_app(service: SupportService | None = None, staff_key: str | None = No
 
     def run(action):
         try:
-            return asdict(action())
-        except ConversationError as exc:
+            result = action()
+            return asdict(result) if is_dataclass(result) else result
+        except (ConversationError, FollowupError) as exc:
             raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
     @app.get("/health")
@@ -73,6 +91,26 @@ def create_app(service: SupportService | None = None, staff_key: str | None = No
     @app.post("/approvals/{thread_id}", dependencies=[Depends(staff)])
     def decide(thread_id: str, decision: ApprovalDecision) -> dict:
         return run(lambda: service.resolve_approval(thread_id, decision.approved, decision.reviewer, decision.note))
+
+    @app.post("/tickets")
+    def create_ticket(request: FollowupRequest, customer_id: Annotated[str, Depends(customer)]) -> dict:
+        return run(lambda: service.followups.create(customer_id, request.order_id, request.locale))
+
+    @app.get("/tickets")
+    def list_tickets(customer_id: Annotated[str, Depends(customer)]) -> list[dict]:
+        return run(lambda: service.followups.list_tickets(customer_id))
+
+    @app.get("/tickets/{ticket_id}")
+    def get_ticket(ticket_id: str, customer_id: Annotated[str, Depends(customer)]) -> dict:
+        return run(lambda: service.followups.get(customer_id, ticket_id))
+
+    @app.post("/tickets/{ticket_id}/cancel")
+    def cancel_ticket(ticket_id: str, customer_id: Annotated[str, Depends(customer)]) -> dict:
+        return run(lambda: service.followups.cancel(customer_id, ticket_id))
+
+    @app.post("/events/shipments", dependencies=[Depends(staff)])
+    def shipment_event(request: ShipmentEvent) -> dict:
+        return run(lambda: service.followups.process(**request.model_dump()))
 
     return app
 
