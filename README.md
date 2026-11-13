@@ -105,7 +105,7 @@ python -m support_agent.demo
 
 ## 来源与贡献边界
 
-本项目基于 [nitanandsinghupw/langgraph-support-agent](https://github.com/nitanandsinghupw/langgraph-support-agent)，基线提交为 `b6fe9faebff8a1af549ae7b8cabcb0b6e6479cec`。保留原项目 Git 历史、MIT 许可证和原作者版权声明。
+本项目基于 LangGraph 和 FastAPI 框架构建，使用 SQLite 保存工单、事件及处理结果，实现事件驱动的售后跟进流程。项目采用 [MIT](LICENSE) 许可证，相关版权及许可声明保留在 LICENSE 文件中。
 
 原项目贡献包括模型工具循环、业务策略、订单工具、退款人工审批、会话检查点和基础评测。本次新增贡献包括持久化物流工单、事件准入与去重、观察模式、受限执行器、撤销跟进、本地通知及对应演示和测试。
 
